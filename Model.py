@@ -8,7 +8,7 @@ import os
 class Model():
     def __init__(self,w_summary = True, logdir_train = None, logdir_test = None
                  ,batch_size = 16, drop_rate = 0.5, lear_rate = 2.5e-4, decay = 0.96,
-                 decay_step = 2000, training = True,projection=True,r_number=20,idNumber=30):
+                 decay_step = 2000, training = True,projection=True,r_number=56,idNumber=30,ALPHA=0.5):
         self.w_summary=w_summary
         self.logdir_train=logdir_train
         self.logdir_test=logdir_test
@@ -22,6 +22,7 @@ class Model():
         self.n_dict = {20:1, 32:2, 44:3, 56:4}
         self.r_number=r_number
         self.idNumber=idNumber
+        self.ALPHA=ALPHA
     def get_input(self):
         return self.img
 
@@ -59,9 +60,34 @@ class Model():
 
         print('Sess initialized in ' + str(int(time.time() - t_start)) + ' sec.')
 
+    def get_center_loss(features, labels, alpha, num_classes):
+
+        len_features = features.get_shape()[1]
+
+        centers = tf.get_variable('centers', [num_classes, len_features], dtype=tf.float32,
+                                  initializer=tf.constant_initializer(0), trainable=False)
+        labels = tf.reshape(labels, [-1])
+
+        centers_batch = tf.gather(centers, labels)
+        loss = tf.nn.l2_loss(features - centers_batch)
+
+        diff = centers_batch - features
+
+        unique_label, unique_idx, unique_count = tf.unique_with_counts(labels)
+        appear_times = tf.gather(unique_count, unique_idx)
+        appear_times = tf.reshape(appear_times, [-1, 1])
+
+        diff = diff / tf.cast((1 + appear_times), tf.float32)
+        diff = alpha * diff
+
+        centers_update_op = tf.scatter_sub(centers, labels, diff)
+
+        return loss, centers, centers_update_op
+
+
     def _center_loss_fn(self, embeddings, labels):
         embedding_size = embeddings.get_shape().as_list()[-1]
-        centers = tf.get_variable(name='centers', shape=[self.hps.num_classes, embedding_size],
+        centers = tf.get_variable(name='centers', shape=[self.idNumber, embedding_size],
                                   initializer=tf.random_normal_initializer(stddev=0.1), trainable=False)
         label_indices = tf.argmax(labels, 1)
         centers_batch = tf.nn.embedding_lookup(centers, label_indices)
@@ -71,7 +97,7 @@ class Model():
 
         centers_update = tf.unsorted_segment_sum(new_centers, row_indices, tf.shape(labels_unique)[0]) / tf.to_float(
             counts)
-        centers = tf.scatter_sub(centers, labels_unique, self.hps.ALPHA * centers_update)
+        centers = tf.scatter_sub(centers, labels_unique, self.ALPHA * centers_update)
 
         return center_loss
 
@@ -142,13 +168,13 @@ class Model():
         layers = []
 
         with tf.variable_scope('conv1'):
-            conv1 = self._conv_layer(inputs, [3, 3, 3, 16], 1)
+            conv1 = self._conv_layer(inputs, [3, 3, 3, 32], 1)
             layers.append(conv1)
 
         for i in range(num_conv):
             with tf.variable_scope('conv2_%d' % (i + 1)):
-                conv2_x = self._residual_block(layers[-1], 16, False)
-                conv2 = self._residual_block(conv2_x, 16, False)
+                conv2_x = self._residual_block(layers[-1], 32, False)
+                conv2 = self._residual_block(conv2_x, 32, False)
                 layers.append(conv2_x)
                 layers.append(conv2)
             print(conv2.get_shape().as_list()[1:],'===conv2 list')
@@ -157,8 +183,8 @@ class Model():
         for i in range(num_conv):
             down_sample = True if i == 0 else False
             with tf.variable_scope('conv3_%d' % (i + 1)):
-                conv3_x = self._residual_block(layers[-1], 32, down_sample)
-                conv3 = self._residual_block(conv3_x, 32, False)
+                conv3_x = self._residual_block(layers[-1], 64, down_sample)
+                conv3 = self._residual_block(conv3_x, 64, False)
                 layers.append(conv3_x)
                 layers.append(conv3)
             print(conv3.get_shape().as_list()[1:], '===conv3 list')
@@ -168,8 +194,8 @@ class Model():
         for i in range(num_conv):
             down_sample = True if i == 0 else False
             with tf.variable_scope('conv4_%d' % (i + 1)):
-                conv4_x = self._residual_block(layers[-1], 64, down_sample)
-                conv4 = self._residual_block(conv4_x, 64, False)
+                conv4_x = self._residual_block(layers[-1], 128, down_sample)
+                conv4 = self._residual_block(conv4_x, 128, False)
                 layers.append(conv4_x)
                 layers.append(conv4)
             print(conv4.get_shape().as_list()[1:], '===conv4 list')
@@ -178,13 +204,15 @@ class Model():
 
         with tf.variable_scope('fc'):
             global_pool = tf.reduce_mean(layers[-1], [1, 2])
-            assert global_pool.get_shape().as_list()[1:] == [64]
+          #  assert global_pool.get_shape().as_list()[1:] == [64]
           #  self.center_loss=self._center_loss_fn()
-            out = self._softmax_layer(global_pool, [64, self.idNumber])
+            fn=global_pool
+            print(global_pool)
+            out = self._softmax_layer(global_pool, [128, self.idNumber])
             layers.append(out)
 
         print(layers[-1])
-        return layers[-1]
+        return layers[-1],fn
 
 
     def generate_model(self):
@@ -195,7 +223,7 @@ class Model():
             self.label=tf.placeholder(dtype = tf.float32, shape = (None, self.idNumber))
         inputTime = time.time()
         print('---Inputs : Done (' + str(int(abs(inputTime - startTime))) + ' sec.)')
-        self.output = self._graph_model(self.img)
+        self.output,self.feature = self._graph_model(self.img)
         graphTime = time.time()
         print('---Graph : Done (' + str(int(abs(graphTime - inputTime))) + ' sec.)')
         with tf.name_scope('loss'):
