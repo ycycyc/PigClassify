@@ -56,11 +56,11 @@ def readMyRecords(filename):
 
     data = tf.decode_raw(features['data_raw'], tf.uint8)
     data = tf.reshape(data, [256, 256, 3])
-    #data = tf.cast(img, tf.float32) * (1. / 255) - 0.5
+    data = tf.cast(data, tf.float32) * (1. / 255) - 0.5
     label = tf.decode_raw(features['label'], tf.uint8)
 
     label =tf.reshape(label,[30])
-  #  label=tf.reshape(label,[1])
+    label=tf.cast(label,tf.float32)
 
     return data,label
 
@@ -80,3 +80,4 @@ def sdf():
             # l = to_categorical(l, 12)
             print(val.shape, l)
 
+#sdf()

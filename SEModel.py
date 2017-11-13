@@ -9,8 +9,8 @@ from tensorflow.contrib.layers import batch_norm, flatten
 from tensorflow.contrib.framework import arg_scope
 import numpy as np
 class SEModel():
-    def __init__(self, w_summary=True, logdir_train=None, logdir_test=None
-                 , batch_size=16, drop_rate=0.5, lear_rate=2.5e-4, decay=0.96,
+    def __init__(self, w_summary=True, logdir_train="/home/lab716/YuChen/PigClassify/logs/train", logdir_test="/home/lab716/YuChen/PigClassify/logs/test"
+                 , batch_size=4, drop_rate=0.5, lear_rate=2.5e-4, decay=0.96,
                  decay_step=2000, training=True, projection=True, r_number=56, idNumber=30, ALPHA=0.5,momentum=0.9
                  ,cardinality=8,ratio=1,ModelName='SeModel01'):
         self.name=ModelName
@@ -56,7 +56,13 @@ class SEModel():
         """ Initialize weights
         """
         print('Session initialization')
-        self.Session = tf.Session()
+        config = tf.ConfigProto(allow_soft_placement=True)
+
+        gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.9)
+
+        config.gpu_options.allow_growth = True
+       # sess = tf.Session(config=config)
+        self.Session = tf.Session(config=config)
         t_start = time.time()
         self.Session.run(self.init)
         print('Sess initialized in ' + str(int(time.time() - t_start)) + ' sec.')
@@ -212,13 +218,13 @@ class SEModel():
         x = self.residual_layer(input_x, out_dim=64, layer_num='1')
         x = self.residual_layer(x, out_dim=128, layer_num='2')
         x = self.residual_layer(x, out_dim=256, layer_num='3')
-        x = self.residual_layer(x, out_dim=512, layer_num='4')
+       # x = self.residual_layer(x, out_dim=512, layer_num='4')
 
         x = self._Global_Average_Pooling(x)
 
         x = flatten(x)
         x=tf.layers.dropout(x,rate=self.drop_rate,training=self.training)
-        feature=tf.layers.dense(x,units=512,name='feature_fn_layer')
+        feature=tf.layers.dense(x,units=256,name='feature_fn_layer')
         x=tf.layers.dense(x,name='final_fully_connected',units=self.idNumber)
         #x = self._Fully_connected(x, layer_name='final_fully_connected')
 
@@ -230,7 +236,7 @@ class SEModel():
         print('CREATE MODEL:')
         with tf.name_scope('inputs'):
             self.img = tf.placeholder(dtype=tf.float32, shape=(None, 256, 256, 3), name='input_img')
-            self.label = tf.placeholder(dtype=tf.int64, shape=(None, self.idNumber))
+            self.label = tf.placeholder(dtype=tf.float32, shape=(None, self.idNumber))
         inputTime = time.time()
         print('---Inputs : Done (' + str(int(abs(inputTime - startTime))) + ' sec.)')
         self.output,self.feature = self._graph_model(self.img)
@@ -285,10 +291,10 @@ class SEModel():
 
         print('---Init : Done (' + str(int(abs(initTime - minimTime))) + ' sec.)')
         with tf.name_scope('training'):
-            tf.summary.scalar('CenterLoss', self.total_loss, collections=['train'])
+           # tf.summary.scalar('CenterLoss', self.total_loss, collections=['train'])
             tf.summary.scalar('learning_rate', self.lr, collections=['train'])
            # tf.summary.scalar('CenterLoss', center_loss)
-            tf.summary.scalar('SoftmaxLoss',self.softmax_loss)
+            #tf.summary.scalar('SoftmaxLoss',self.softmax_loss)
 
             tf.summary.scalar('TotalLoss', self.total_loss)
         with tf.name_scope('summary'):
@@ -317,44 +323,49 @@ class SEModel():
 
                     print('Please give a Model in args (see README for further information)')
 
-    def _train(self, nEpochs = 10, epochSize = 1000, saveStep = 500, validIter = 10):
-        with tf.name_scope('Train'):
+    def _train(self, nEpochs = 200, epochSize = 5000, saveStep = 500, validIter = 10):
+        data, label = data_util.readMyRecords("train.tfrecords")
 
-            self.generator = self.dataset._aux_generator(self.batchSize, self.nStack, normalize = True, sample_set = 'train')
-            self.valid_gen = self.dataset._aux_generator(self.batchSize, self.nStack, normalize = True, sample_set = 'valid')
-            startTime = time.time()
-            self.resume = {}
-            self.resume['accur'] = []
-            self.resume['loss'] = []
-            self.resume['err'] = []
-            for epoch in range(nEpochs):
-                epochstartTime = time.time()
-                avg_cost = 0.
-                cost = 0.
-                print('Epoch :' + str(epoch) + '/' + str(nEpochs) + '\n')
-                # Training Set
-                for i in range(epochSize):
-                    percent = ((i+1)/epochSize) * 100
-                    num = np.int(20*percent/100)
-                    tToEpoch = int((time.time() - epochstartTime) * (100 - percent)/(percent))
-                    sys.stdout.write('\r Train: {0}>'.format("="*num) + "{0}>".format(" "*(20-num)) + '||' + str(percent)[:4] + '%' + ' -cost: ' + str(cost)[:6] + ' -avg_loss: ' + str(avg_cost)[:5] + ' -timeToEnd: ' + str(tToEpoch) + ' sec.')
-                    sys.stdout.flush()
-                    img_train, gt_train, weight_train = next(self.generator)
-                    if i % saveStep == 0:
+        dataBatch, labelBatch = tf.train.shuffle_batch([data, label],
+                                                         batch_size=self.batch_size, capacity=2000,
+                                                         min_after_dequeue=1000)
 
-                        _, c, summary = self.Session.run([self.train_rmsprop, self.loss, self.train_op], feed_dict = {self.img : img_train, self.label: gt_train})
+        data2, label2 = data_util.readMyRecords("valid.tfrecords")
+        dataBatch2, labelBatch2 = tf.train.shuffle_batch([data2, label2],
+                                                           batch_size=self.batch_size, capacity=2000,
+                                                           min_after_dequeue=1000)
+        threads = tf.train.start_queue_runners(sess=self.Session)
+        startTime = time.time()
+        self.resume = {}
+        self.resume['accur'] = []
+        self.resume['loss'] = []
+        self.resume['err'] = []
 
-                        self.train_summary.add_summary(summary, epoch*epochSize + i)
-                        self.train_summary.flush()
-                    else:
+        for epoch in range(nEpochs):
+            epochstartTime = time.time()
+            avg_cost = 0.
+            cost = 0.
+            print('Epoch :' + str(epoch) + '/' + str(nEpochs) + '\n')
+            for i in range(epochSize):
+                data_train, label_train = self.Session.run([dataBatch, labelBatch])
+                percent = ((i+1)/epochSize) * 100
+                num = np.int(20*percent/100)
+                tToEpoch = int((time.time() - epochstartTime) * (100 - percent)/(percent))
+                sys.stdout.write('\r Train: {0}>'.format("="*num) + "{0}>".format(" "*(20-num)) + '||' + str(percent)[:4] + '%' + ' -cost: ' + str(cost)[:6] + ' -avg_loss: ' + str(avg_cost)[:5] + ' -timeToEnd: ' + str(tToEpoch) + ' sec.')
+                sys.stdout.flush()
+            if i % saveStep == 0:
+                _, c, summary = self.Session.run([self.train_rmsprop, self.total_loss, self.train_op], feed_dict = {self.img : data_train, self.label: label_train})
 
-                        _, c, = self.Session.run([self.train_rmsprop, self.loss], feed_dict = {self.img : img_train, self.label: gt_train})
-                    cost += c
-                    avg_cost += c/epochSize
+                self.train_summary.add_summary(summary, epoch*epochSize + i)
+                self.train_summary.flush()
+            else:
+                _, c, = self.Session.run([self.train_rmsprop, self.total_loss], feed_dict = {self.img : data_train, self.label: label_train})
+                cost += c
+                avg_cost += c/epochSize
                 epochfinishTime = time.time()
                 #Save Weight (axis = epoch)
 
-                weight_summary = self.Session.run(self.weight_op, {self.img : img_train, self.label: gt_train})
+                weight_summary = self.Session.run(self.weight_op, {self.img : data_train, self.label: label_train})
                 self.train_summary.add_summary(weight_summary, epoch)
                 self.train_summary.flush()
                 #self.weight_summary.add_summary(weight_summary, epoch)
@@ -366,13 +377,15 @@ class SEModel():
                 # Validation Set
                 accuracy_array = np.array([0.0]*1)
                 for i in range(validIter):
-                    img_valid, gt_valid, w_valid = next(self.generator)
-                    accuracy_pred = self.Session.run(self.acc, feed_dict = {self.img : img_valid, self.label: gt_valid})
+                    data_train2, label_train2 = self.Session.run([dataBatch2, labelBatch2])
+
+                    #img_valid, gt_valid, w_valid = next(self.generator)
+                    accuracy_pred = self.Session.run(self.acc, feed_dict = {self.img : data_train2, self.label: label_train2})
                     accuracy_array += np.array(accuracy_pred, dtype = np.float32) / validIter
                 print('--Avg. Accuracy =', str((np.sum(accuracy_array) / len(accuracy_array)) * 100)[:6], '%' )
                 self.resume['accur'].append(accuracy_pred)
                 self.resume['err'].append(np.sum(accuracy_array) / len(accuracy_array))
-                valid_summary = self.Session.run(self.test_op, feed_dict={self.img : img_valid, self.label: gt_valid})
+                valid_summary = self.Session.run(self.test_op, feed_dict={self.img : data_train2, self.label: label_train2})
                 self.test_summary.add_summary(valid_summary, epoch)
                 self.test_summary.flush()
         print("Train Done")
@@ -394,10 +407,9 @@ class SEModel():
         out_file.close()
         print('Training Record Saved')
 
-    def training_init(self, nEpochs=10, epochSize=1000, saveStep=500, dataset=None, load=None):
+    def training_init(self, nEpochs=200, epochSize=5000, saveStep=500, dataset=None, load=None):
 
         with tf.name_scope('Session'):
-            with tf.device(self.gpu):
                 self._init_weight()
                 self._define_saver_summary()
                 if load is not None:
@@ -405,11 +417,16 @@ class SEModel():
 
                 self._train(nEpochs, epochSize, saveStep, validIter=10)
 
+    def _define_saver_summary(self, summary=True):
 
+        if (self.logdir_train == None) or (self.logdir_test == None):
+            raise ValueError('Train/Test directory not assigned')
+        else:
+            self.saver = tf.train.Saver()
+            if summary:
+                    self.train_summary = tf.summary.FileWriter(self.logdir_train, tf.get_default_graph())
 
-
-
-
+                    self.test_summary = tf.summary.FileWriter(self.logdir_test)
 
 
 
