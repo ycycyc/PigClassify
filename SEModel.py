@@ -236,7 +236,7 @@ class SEModel():
         print('CREATE MODEL:')
         with tf.name_scope('inputs'):
             self.img = tf.placeholder(dtype=tf.float32, shape=(None, 256, 256, 3), name='input_img')
-            self.label = tf.placeholder(dtype=tf.float32, shape=(None, self.idNumber))
+            self.label = tf.placeholder(dtype=tf.int64, shape=(None, self.idNumber))
         inputTime = time.time()
         print('---Inputs : Done (' + str(int(abs(inputTime - startTime))) + ' sec.)')
         self.output,self.feature = self._graph_model(self.img)

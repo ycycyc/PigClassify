@@ -40,7 +40,8 @@ def makeData():
                 #cv2.imshow('w',img)
             #cv2.waitKey(100)
 
-
+    train_writer.close()
+    valid_writer.close()
 #makeData()
 
 def readMyRecords(filename):
@@ -60,7 +61,7 @@ def readMyRecords(filename):
     label = tf.decode_raw(features['label'], tf.uint8)
 
     label =tf.reshape(label,[30])
-    label=tf.cast(label,tf.float32)
+    #label=tf.cast(label,tf.float32)
 
     return data,label
 
